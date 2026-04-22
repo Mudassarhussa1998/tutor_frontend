@@ -1,15 +1,40 @@
 'use client';
 
-import { useState } from 'react';
-import { Settings, Home } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { Home, MessageSquare, Smartphone, Bot, GraduationCap, LogOut } from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { getUser, clearAuth } from '../lib/auth';
 
 const navigation = [
-  { name: 'Weather', icon: Home, current: true },
-  { name: 'Settings', icon: Settings, current: false },
+  { name: 'Weather', icon: Home, href: '/' },
+  { name: 'Chat', icon: MessageSquare, href: '/chat' },
+  { name: 'TutorMind AI', icon: GraduationCap, href: '/tutor/chat' },
+  { name: 'Phone Search', icon: Smartphone, href: '/phone-search' },
+  { name: 'Automata', icon: Bot, href: '/automata' },
 ];
 
 export function Sidebar() {
-  const [activeItem, setActiveItem] = useState('Weather');
+  const pathname = usePathname();
+  const router = useRouter();
+  const [user, setUser] = useState<{ username: string; email: string } | null>(null);
+
+  useEffect(() => {
+    setUser(getUser());
+  }, []);
+
+  async function logout() {
+    try {
+      const { getToken } = await import('../lib/auth');
+      const token = getToken();
+      await fetch('/api/auth/logout/', {
+        method: 'POST',
+        headers: { Authorization: `Token ${token}` },
+      });
+    } catch {}
+    clearAuth();
+    router.push('/tutor/login');
+  }
 
   return (
     <div className="w-60 bg-card border-r border-border flex flex-col">
@@ -19,11 +44,11 @@ export function Sidebar() {
 
       <nav className="flex-1 px-4 space-y-2">
         {navigation.map((item) => {
-          const isActive = activeItem === item.name;
+          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
           return (
-            <button
+            <Link
               key={item.name}
-              onClick={() => setActiveItem(item.name)}
+              href={item.href}
               className={`w-full flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
                 isActive
                   ? 'bg-[#F0F0F0] text-accent'
@@ -32,20 +57,31 @@ export function Sidebar() {
             >
               <item.icon className="w-5 h-5 mr-3" />
               {item.name}
-            </button>
+            </Link>
           );
         })}
       </nav>
 
       <div className="p-4 border-t border-border">
-        <div className="flex items-center">
-          <div className="w-8 h-8 bg-accent rounded-full flex items-center justify-center text-white text-sm font-medium">
-            JD
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-accent rounded-full flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
+            {user?.username?.[0]?.toUpperCase() ?? '?'}
           </div>
-          <div className="ml-3">
-            <p className="text-sm font-medium text-accent">John Doe</p>
-            <p className="text-xs text-muted">Sales Manager</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-accent truncate">
+              {user?.username ?? 'Guest'}
+            </p>
+            <p className="text-xs text-muted truncate">{user?.email ?? ''}</p>
           </div>
+          {user && (
+            <button
+              onClick={logout}
+              title="Logout"
+              className="p-1.5 text-muted hover:text-red-500 transition flex-shrink-0"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>

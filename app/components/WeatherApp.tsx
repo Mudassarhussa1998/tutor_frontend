@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Search, MapPin } from 'lucide-react';
+import { authedFetch } from '../lib/fetcher';
 
 type CitySuggestion = {
   properties: {
@@ -50,7 +51,7 @@ async function fetchCitySuggestions(query: string): Promise<CitySuggestion[]> {
 }
 
 async function fetchWeather(city: string): Promise<WeatherData> {
-  const response = await fetch(`/api/weather?city=${encodeURIComponent(city)}`);
+  const response = await authedFetch(`/api/weather?city=${encodeURIComponent(city)}`);
 
   if (!response.ok) {
     throw new Error('Unable to load weather data');
