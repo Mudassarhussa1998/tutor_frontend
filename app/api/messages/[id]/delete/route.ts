@@ -5,7 +5,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   try {
     const { id } = await params;
     const auth = request.headers.get('authorization') || '';
-    const res = await fetch(`${DJANGO}/api/messages/${id}/delete/`, {
+    const res = await fetch(`${DJANGO}/api/chat/messages/${id}/delete/`, {
       method: 'DELETE',
       headers: { Authorization: auth },
     });

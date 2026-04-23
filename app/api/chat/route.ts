@@ -5,7 +5,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = request.headers.get('authorization') || '';
     const body = await request.json();
-    const res = await fetch(`${DJANGO}/api/chat/`, {
+    const res = await fetch(`${DJANGO}/api/chat/send/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: auth },
       body: JSON.stringify(body),

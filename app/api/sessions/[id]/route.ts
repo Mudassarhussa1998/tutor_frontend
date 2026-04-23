@@ -5,7 +5,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   try {
     const { id } = await params;
     const auth = request.headers.get('authorization') || '';
-    const res = await fetch(`${DJANGO}/api/sessions/${id}/`, {
+    const res = await fetch(`${DJANGO}/api/chat/sessions/${id}/`, {
       headers: { Authorization: auth },
       cache: 'no-store',
     });
@@ -21,7 +21,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const { id } = await params;
     const auth = request.headers.get('authorization') || '';
     const body = await request.json();
-    const res = await fetch(`${DJANGO}/api/sessions/${id}/`, {
+    const res = await fetch(`${DJANGO}/api/chat/sessions/${id}/`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: auth },
       body: JSON.stringify(body),
@@ -37,7 +37,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   try {
     const { id } = await params;
     const auth = request.headers.get('authorization') || '';
-    const res = await fetch(`${DJANGO}/api/sessions/${id}/`, {
+    const res = await fetch(`${DJANGO}/api/chat/sessions/${id}/`, {
       method: 'DELETE',
       headers: { Authorization: auth },
     });
