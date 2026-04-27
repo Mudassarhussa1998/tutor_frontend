@@ -8,7 +8,9 @@ import { Bot } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [form, setForm] = useState({ username: '', password: '' });
+  
+  // ✅ FIX 1: changed "username" to "email" in form state
+  const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -20,17 +22,22 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/login/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // ✅ FIX 2: form now correctly sends { email, password }
         body: JSON.stringify(form),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.detail || JSON.stringify(data));
-      // Django may return token at top level or nested — handle both
+
       const token = data.token || data.key;
-      const username = data.username || data.user?.username || form.username;
-      const email = data.email || data.user?.email || '';
       if (!token) throw new Error('No token received from server');
+
+      const username = data.username || data.user?.username || '';
+      const email    = data.email    || data.user?.email    || form.email;
+
       saveAuth(token, { username, email });
       router.push('/');
+
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -51,17 +58,20 @@ export default function LoginPage() {
 
         <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
           <form onSubmit={handleSubmit} className="space-y-4">
+
+            {/* ✅ FIX 3: label, type, value, onChange all updated to email */}
             <div>
-              <label className="block text-xs text-muted mb-1">Username</label>
+              <label className="block text-xs text-muted mb-1">Email</label>
               <input
-                type="text"
+                type="email"
                 required
-                value={form.username}
-                onChange={(e) => setForm({ ...form, username: e.target.value })}
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
                 className="w-full px-4 py-3 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                placeholder="johndoe"
+                placeholder="ahmad@gmail.com"
               />
             </div>
+
             <div>
               <label className="block text-xs text-muted mb-1">Password</label>
               <input
@@ -73,7 +83,9 @@ export default function LoginPage() {
                 placeholder="••••••••"
               />
             </div>
-            {error && <p className="text-xs text-red-600">{error}</p>}
+
+            {error && <p className="text-xs text-red-500">{error}</p>}
+
             <button
               type="submit"
               disabled={loading}
@@ -82,6 +94,7 @@ export default function LoginPage() {
               {loading ? 'Logging in…' : 'Log in'}
             </button>
           </form>
+
           <p className="text-center text-xs text-muted mt-4">
             No account?{' '}
             <Link href="/tutor/signup" className="text-accent font-medium hover:underline">

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { getToken, getUser, clearAuth } from '../../lib/auth';
 import {
@@ -33,21 +33,22 @@ export default function TutorChatPage() {
   const router = useRouter();
   const [user, setUser] = useState<{ username: string; email: string } | null>(null);
 
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions]           = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages]           = useState<Message[]>([]);
 
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
+  const [input, setInput]                 = useState('');
+  const [sending, setSending]             = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
 
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editTitle, setEditTitle] = useState('');
+  const [editingId, setEditingId]   = useState<number | null>(null);
+  const [editTitle, setEditTitle]   = useState('');
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Auth guard
+  // ── Auth guard ───────────────────────────────────────────────────────────────
+
   useEffect(() => {
     const u = getUser();
     const t = getToken();
@@ -63,14 +64,22 @@ export default function TutorChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, sending]);
 
-  // ── Sessions ────────────────────────────────────────────────────────────────
+  // ── Sessions ─────────────────────────────────────────────────────────────────
 
   async function loadSessions() {
     setSessionsLoading(true);
     try {
-      const res = await authedFetch('/api/sessions/');
+      const res  = await authedFetch('/api/sessions/');
       const data = await res.json();
-      setSessions(Array.isArray(data) ? data : []);
+      // normalise: Django may return session_id instead of id
+      const list = (Array.isArray(data) ? data : []).map((s: any) => ({
+        id:           s.id ?? s.session_id,
+        title:        s.title ?? 'Untitled',
+        created_at:   s.created_at ?? '',
+        updated_at:   s.updated_at ?? s.created_at ?? '',
+        message_count: s.message_count,
+      }));
+      setSessions(list);
     } catch {
       setSessions([]);
     } finally {
@@ -80,14 +89,23 @@ export default function TutorChatPage() {
 
   async function createSession() {
     try {
-      const res = await authedFetch('/api/sessions/', {
+      const res  = await authedFetch('/api/sessions/', {
         method: 'POST',
         body: JSON.stringify({ title: 'New Chat' }),
       });
-      const data = await res.json();
+      const raw  = await res.json();
+      if (!res.ok) throw new Error(raw.error || 'Failed to create session');
+      const data: Session = {
+        id:         raw.id ?? raw.session_id,
+        title:      raw.title ?? 'New Chat',
+        created_at: raw.created_at ?? new Date().toISOString(),
+        updated_at: raw.updated_at ?? new Date().toISOString(),
+      };
       setSessions((prev) => [data, ...prev]);
       selectSession(data);
-    } catch {}
+    } catch (err: any) {
+      console.error('createSession error:', err.message);
+    }
   }
 
   async function deleteSession(id: number, e: React.MouseEvent) {
@@ -105,13 +123,13 @@ export default function TutorChatPage() {
   async function renameSession(id: number) {
     if (!editTitle.trim()) return;
     try {
-      const res = await authedFetch(`/api/sessions/${id}/`, {
+      const res  = await authedFetch(`/api/sessions/${id}/`, {
         method: 'PUT',
         body: JSON.stringify({ title: editTitle.trim() }),
       });
       const data = await res.json();
-      setSessions((prev) => prev.map((s) => (s.id === id ? data : s)));
-      if (activeSession?.id === id) setActiveSession(data);
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title: data.title } : s)));
+      if (activeSession?.id === id) setActiveSession((prev) => prev ? { ...prev, title: data.title } : prev);
     } catch {}
     setEditingId(null);
   }
@@ -121,9 +139,17 @@ export default function TutorChatPage() {
     setMessagesLoading(true);
     setMessages([]);
     try {
-      const res = await authedFetch(`/api/sessions/${session.id}/`);
+      const res  = await authedFetch(`/api/sessions/${session.id}/`);
       const data = await res.json();
-      setMessages(data.messages || []);
+      const msgs: Message[] = (data.messages || [])
+        .filter((m: any) => m.id != null)
+        .map((m: any) => ({
+          id:         m.id,
+          prompt:     m.prompt ?? '',
+          response:   m.response ?? '',
+          created_at: m.created_at ? String(m.created_at) : new Date().toISOString(),
+        }));
+      setMessages(msgs);
     } catch {
       setMessages([]);
     } finally {
@@ -131,7 +157,7 @@ export default function TutorChatPage() {
     }
   }
 
-  // ── Messages ────────────────────────────────────────────────────────────────
+  // ── Messages ─────────────────────────────────────────────────────────────────
 
   async function sendMessage(e: React.FormEvent) {
     e.preventDefault();
@@ -142,32 +168,52 @@ export default function TutorChatPage() {
     setSending(true);
 
     try {
-      const res = await authedFetch('/api/chat/', {
+      const res  = await authedFetch('/api/chat/', {
         method: 'POST',
         body: JSON.stringify({ prompt, session_id: activeSession.id }),
       });
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setMessages((prev) => [...prev, data]);
-      // bump session updated_at in list
+      if (!res.ok || data.error) throw new Error(data.error || 'Failed to send message');
+      if (data.id == null) throw new Error('Invalid response from server');
+
+      const newMessage: Message = {
+        id:         data.id,
+        prompt:     data.prompt ?? prompt,
+        response:   data.response ?? '',
+        created_at: data.created_at ? String(data.created_at) : new Date().toISOString(),
+      };
+
+      setMessages((prev) => [...prev, newMessage]);
       setSessions((prev) =>
-        prev.map((s) => (s.id === activeSession.id ? { ...s, updated_at: new Date().toISOString() } : s))
+        prev.map((s) =>
+          s.id === activeSession.id
+            ? { ...s, updated_at: new Date().toISOString() }
+            : s
+        )
       );
     } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        { id: Date.now(), prompt, response: `Error: ${err.message}`, created_at: new Date().toISOString() },
-      ]);
+      // ✅ error message gets a unique negative id so it never clashes with real ids
+      const errorMessage: Message = {
+        id:         -Date.now(),
+        prompt,
+        response:   `⚠️ Error: ${err.message}`,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setSending(false);
     }
   }
 
   async function deleteMessage(id: number) {
+    // optimistic remove
+    setMessages((prev) => prev.filter((m) => m.id !== id));
     try {
       await authedFetch(`/api/messages/${id}/delete/`, { method: 'DELETE' });
-      setMessages((prev) => prev.filter((m) => m.id !== id));
-    } catch {}
+    } catch {
+      // if delete fails, reload messages from server
+      if (activeSession) selectSession(activeSession);
+    }
   }
 
   // ── Logout ───────────────────────────────────────────────────────────────────
@@ -185,11 +231,15 @@ export default function TutorChatPage() {
   return (
     <div className="flex h-screen bg-background overflow-hidden">
 
-      {/* ── Sessions sidebar ── */}
+      {/* ── Sidebar ── */}
       <div className="w-64 bg-card border-r border-border flex flex-col flex-shrink-0">
-        {/* Header */}
+
+        {/* Sidebar header */}
         <div className="p-4 border-b border-border flex items-center gap-2">
-          <Link href="/" className="p-1.5 text-muted hover:text-accent transition rounded-lg hover:bg-[#F0F0F0]">
+          <Link
+            href="/"
+            className="p-1.5 text-muted hover:text-accent transition rounded-lg hover:bg-[#F0F0F0]"
+          >
             <ArrowLeft className="w-4 h-4" />
           </Link>
           <div className="w-7 h-7 bg-accent rounded-lg flex items-center justify-center">
@@ -198,7 +248,7 @@ export default function TutorChatPage() {
           <span className="text-sm font-semibold text-accent">TutorMind AI</span>
         </div>
 
-        {/* New chat button */}
+        {/* New chat */}
         <div className="p-3">
           <button
             onClick={createSession}
@@ -216,6 +266,7 @@ export default function TutorChatPage() {
           ) : sessions.length === 0 ? (
             <p className="text-xs text-muted text-center py-6">No chats yet</p>
           ) : (
+            // ✅ key={s.id} — always a real number from server
             sessions.map((s) => (
               <div
                 key={s.id}
@@ -231,10 +282,10 @@ export default function TutorChatPage() {
                 {editingId === s.id ? (
                   <input
                     autoFocus
-                    value={editTitle}
+                    value={editTitle ?? ''}
                     onChange={(e) => setEditTitle(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') renameSession(s.id);
+                      if (e.key === 'Enter')  renameSession(s.id);
                       if (e.key === 'Escape') setEditingId(null);
                     }}
                     onClick={(e) => e.stopPropagation()}
@@ -247,17 +298,33 @@ export default function TutorChatPage() {
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
                   {editingId === s.id ? (
                     <>
-                      <button onClick={(e) => { e.stopPropagation(); renameSession(s.id); }}
-                        className="p-1 hover:text-accent"><Check className="w-3 h-3" /></button>
-                      <button onClick={(e) => { e.stopPropagation(); setEditingId(null); }}
-                        className="p-1 hover:text-accent"><X className="w-3 h-3" /></button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); renameSession(s.id); }}
+                        className="p-1 hover:text-accent"
+                      >
+                        <Check className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingId(null); }}
+                        className="p-1 hover:text-accent"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
                     </>
                   ) : (
                     <>
-                      <button onClick={(e) => { e.stopPropagation(); setEditingId(s.id); setEditTitle(s.title); }}
-                        className="p-1 hover:text-accent"><Pencil className="w-3 h-3" /></button>
-                      <button onClick={(e) => deleteSession(s.id, e)}
-                        className="p-1 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingId(s.id); setEditTitle(s.title); }}
+                        className="p-1 hover:text-accent"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => deleteSession(s.id, e)}
+                        className="p-1 hover:text-red-500"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </>
                   )}
                 </div>
@@ -276,8 +343,11 @@ export default function TutorChatPage() {
               <p className="text-xs font-medium text-accent truncate">{user?.username}</p>
               <p className="text-xs text-muted truncate">{user?.email}</p>
             </div>
-            <button onClick={logout} title="Logout"
-              className="p-1.5 text-muted hover:text-red-500 transition flex-shrink-0">
+            <button
+              onClick={logout}
+              title="Logout"
+              className="p-1.5 text-muted hover:text-red-500 transition flex-shrink-0"
+            >
               <LogOut className="w-4 h-4" />
             </button>
           </div>
@@ -290,10 +360,12 @@ export default function TutorChatPage() {
         {/* Chat header */}
         <div className="bg-card border-b border-border px-6 py-4 flex-shrink-0">
           <h2 className="text-base font-semibold text-accent">
-            {activeSession ? activeSession.title : 'ChatWithTutor'}
+            {activeSession ? activeSession.title : 'TutorMind AI'}
           </h2>
           <p className="text-xs text-muted mt-0.5">
-            {activeSession ? `${messages.length} messages` : 'Select or create a chat to get started'}
+            {activeSession
+              ? `${messages.length} message${messages.length !== 1 ? 's' : ''}`
+              : 'Select or create a chat to get started'}
           </p>
         </div>
 
@@ -305,21 +377,29 @@ export default function TutorChatPage() {
                 <Bot className="w-8 h-8 text-muted" />
               </div>
               <p className="text-sm font-medium text-accent">Start a new chat</p>
-              <p className="text-xs text-muted mt-1">Click "New chat" to begin a session with your tutor</p>
+              <p className="text-xs text-muted mt-1">
+                Click "New chat" to begin a session with your tutor
+              </p>
             </div>
+
           ) : messagesLoading ? (
             <div className="flex items-center justify-center h-full">
               <p className="text-sm text-muted">Loading messages…</p>
             </div>
+
           ) : messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center">
               <Bot className="w-10 h-10 text-muted mb-3" />
               <p className="text-sm text-muted">No messages yet. Ask your tutor anything!</p>
             </div>
+
           ) : (
             <div className="max-w-3xl mx-auto space-y-6">
+
+              {/* ✅ key uses msg.id — guaranteed non-null from selectSession filter + sendMessage guard */}
               {messages.map((msg) => (
                 <div key={msg.id} className="space-y-3 group">
+
                   {/* User bubble */}
                   <div className="flex items-start gap-3 justify-end">
                     <div className="bg-accent text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-[75%]">
@@ -342,20 +422,27 @@ export default function TutorChatPage() {
                           <div className="flex items-center gap-1">
                             <Clock className="w-3 h-3 text-muted" />
                             <span className="text-xs text-muted">
-                              {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {new Date(msg.created_at).toLocaleTimeString([], {
+                                hour:   '2-digit',
+                                minute: '2-digit',
+                              })}
                             </span>
                           </div>
-                          <button
-                            onClick={() => deleteMessage(msg.id)}
-                            className="opacity-0 group-hover:opacity-100 transition p-1 text-muted hover:text-red-500"
-                            title="Delete message"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                          {/* Only show delete for real messages (not error placeholders) */}
+                          {msg.id > 0 && (
+                            <button
+                              onClick={() => deleteMessage(msg.id)}
+                              className="opacity-0 group-hover:opacity-100 transition p-1 text-muted hover:text-red-500"
+                              title="Delete message"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
                   </div>
+
                 </div>
               ))}
 
@@ -367,13 +454,15 @@ export default function TutorChatPage() {
                   </div>
                   <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3">
                     <div className="flex gap-1 items-center h-4">
-                      <span className="w-2 h-2 bg-muted rounded-full animate-bounce [animation-delay:0ms]" />
-                      <span className="w-2 h-2 bg-muted rounded-full animate-bounce [animation-delay:150ms]" />
-                      <span className="w-2 h-2 bg-muted rounded-full animate-bounce [animation-delay:300ms]" />
+                      {/* ✅ keys on static sibling spans */}
+                      <span key="dot-1" className="w-2 h-2 bg-muted rounded-full animate-bounce [animation-delay:0ms]" />
+                      <span key="dot-2" className="w-2 h-2 bg-muted rounded-full animate-bounce [animation-delay:150ms]" />
+                      <span key="dot-3" className="w-2 h-2 bg-muted rounded-full animate-bounce [animation-delay:300ms]" />
                     </div>
                   </div>
                 </div>
               )}
+
               <div ref={bottomRef} />
             </div>
           )}
@@ -386,7 +475,7 @@ export default function TutorChatPage() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              disabled={!activeSession}
+              disabled={!activeSession || sending}
               placeholder={activeSession ? 'Ask your tutor anything…' : 'Select a chat first'}
               className="flex-1 px-4 py-3 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             />
@@ -399,6 +488,7 @@ export default function TutorChatPage() {
             </button>
           </form>
         </div>
+
       </div>
     </div>
   );
