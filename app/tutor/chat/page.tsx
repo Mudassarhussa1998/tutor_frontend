@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { getToken, getUser, clearAuth } from '../../lib/auth';
 import {
   Bot, Send, Plus, Trash2, Pencil, Check, X,
-  LogOut, MessageSquare, Clock, ArrowLeft,
+  LogOut, MessageSquare, Clock, ArrowLeft, Paperclip,
+  FileText, FileImage, File, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { authedFetch } from '../../lib/fetcher';
 import Link from 'next/link';
@@ -27,6 +28,15 @@ type Message = {
   created_at: string;
 };
 
+type UploadedDoc = {
+  id: number;
+  filename: string;
+  file_type: string;
+  is_processed: boolean;
+  char_count: number;
+  created_at: string;
+};
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function TutorChatPage() {
@@ -44,6 +54,18 @@ export default function TutorChatPage() {
 
   const [editingId, setEditingId]   = useState<number | null>(null);
   const [editTitle, setEditTitle]   = useState('');
+
+  // Upload state
+  const [uploadFile, setUploadFile]       = useState<File | null>(null);
+  const [uploading, setUploading]         = useState(false);
+  const [uploadStatus, setUploadStatus]   = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Documents panel state
+  const [docs, setDocs]                   = useState<UploadedDoc[]>([]);
+  const [docsLoading, setDocsLoading]     = useState(false);
+  const [docsOpen, setDocsOpen]           = useState(false);
+  const [deletingDocId, setDeletingDocId] = useState<number | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -116,6 +138,8 @@ export default function TutorChatPage() {
       if (activeSession?.id === id) {
         setActiveSession(null);
         setMessages([]);
+        setDocs([]);
+        setDocsOpen(false);
       }
     } catch {}
   }
@@ -154,6 +178,40 @@ export default function TutorChatPage() {
       setMessages([]);
     } finally {
       setMessagesLoading(false);
+    }
+    // Load docs for this session too
+    loadDocs(session.id);
+  }
+
+  // ── Documents ─────────────────────────────────────────────────────────────────
+
+  async function loadDocs(sessionId: number) {
+    setDocsLoading(true);
+    try {
+      const res  = await authedFetch(`/api/sessions/${sessionId}/documents/`);
+      const data = await res.json();
+      setDocs(Array.isArray(data) ? data : []);
+    } catch {
+      setDocs([]);
+    } finally {
+      setDocsLoading(false);
+    }
+  }
+
+  async function deleteDoc(docId: number) {
+    setDeletingDocId(docId);
+    try {
+      const res = await authedFetch(`/api/documents/${docId}/delete/`, { method: 'DELETE' });
+      if (res.ok || res.status === 204) {
+        setDocs((prev) => prev.filter((d) => d.id !== docId));
+      } else {
+        const data = await res.json();
+        console.error('Delete doc failed:', data.error || data.detail);
+      }
+    } catch (err: any) {
+      console.error('Delete doc error:', err.message);
+    } finally {
+      setDeletingDocId(null);
     }
   }
 
@@ -213,6 +271,41 @@ export default function TutorChatPage() {
     } catch {
       // if delete fails, reload messages from server
       if (activeSession) selectSession(activeSession);
+    }
+  }
+
+  // ── Upload ───────────────────────────────────────────────────────────────────
+
+  async function handleUpload() {
+    if (!uploadFile) return;
+    setUploading(true);
+    setUploadStatus(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', uploadFile);
+      // session_id must be a FormData field — NOT JSON — so Django's
+      // request.data (multipart parser) can read it alongside the file.
+      if (activeSession) {
+        formData.append('session_id', String(activeSession.id));
+      }
+
+      // authedFetch detects FormData and skips Content-Type: application/json,
+      // letting the browser set the correct multipart/form-data boundary.
+      const res = await authedFetch('/api/chat/upload/', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.detail || 'Upload failed');
+      setUploadStatus(` "${uploadFile.name}" uploaded. You can now ask questions about it.`);
+      setUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      // Refresh the documents list so the new file appears immediately
+      if (activeSession) loadDocs(activeSession.id);
+    } catch (err: any) {
+      setUploadStatus(`❌ ${err.message}`);
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -359,14 +452,107 @@ export default function TutorChatPage() {
 
         {/* Chat header */}
         <div className="bg-card border-b border-border px-6 py-4 flex-shrink-0">
-          <h2 className="text-base font-semibold text-accent">
-            {activeSession ? activeSession.title : 'TutorMind AI'}
-          </h2>
-          <p className="text-xs text-muted mt-0.5">
-            {activeSession
-              ? `${messages.length} message${messages.length !== 1 ? 's' : ''}`
-              : 'Select or create a chat to get started'}
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-accent">
+                {activeSession ? activeSession.title : 'TutorMind AI'}
+              </h2>
+              <p className="text-xs text-muted mt-0.5">
+                {activeSession
+                  ? `${messages.length} message${messages.length !== 1 ? 's' : ''}`
+                  : 'Select or create a chat to get started'}
+              </p>
+            </div>
+
+            {/* Documents toggle — only shown when a session is active */}
+            {activeSession && (
+              <button
+                onClick={() => {
+                  setDocsOpen((v) => !v);
+                  if (!docsOpen && activeSession) loadDocs(activeSession.id);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted border border-border rounded-lg hover:bg-[#F0F0F0] hover:text-accent transition"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Documents
+                {docs.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 bg-accent text-white rounded-full text-[10px] font-semibold leading-none">
+                    {docs.length}
+                  </span>
+                )}
+                {docsOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+            )}
+          </div>
+
+          {/* Documents panel — collapsible */}
+          {activeSession && docsOpen && (
+            <div className="mt-3 border border-border rounded-xl overflow-hidden">
+              <div className="bg-[#F7F7F2] px-4 py-2 flex items-center justify-between">
+                <p className="text-xs font-semibold text-accent uppercase tracking-wide">
+                  Uploaded documents
+                </p>
+                <p className="text-xs text-muted">
+                  {docsLoading ? 'Loading…' : `${docs.length} file${docs.length !== 1 ? 's' : ''}`}
+                </p>
+              </div>
+
+              {docsLoading ? (
+                <div className="px-4 py-3">
+                  <p className="text-xs text-muted">Loading documents…</p>
+                </div>
+              ) : docs.length === 0 ? (
+                <div className="px-4 py-3">
+                  <p className="text-xs text-muted">No documents uploaded for this session yet.</p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {docs.map((doc) => (
+                    <li key={doc.id} className="flex items-center gap-3 px-4 py-2.5 bg-card hover:bg-[#F7F7F2] transition group">
+                      {/* Icon by type */}
+                      <div className="flex-shrink-0 text-muted">
+                        {doc.file_type?.includes('image') ? (
+                          <FileImage className="w-4 h-4" />
+                        ) : doc.file_type?.includes('pdf') ? (
+                          <FileText className="w-4 h-4 text-red-400" />
+                        ) : (
+                          <File className="w-4 h-4" />
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-accent truncate">{doc.filename}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-muted uppercase">{doc.file_type}</span>
+                          {doc.char_count > 0 && (
+                            <span className="text-[10px] text-muted">{doc.char_count.toLocaleString()} chars</span>
+                          )}
+                          <span className={`text-[10px] font-medium ${doc.is_processed ? 'text-green-600' : 'text-yellow-600'}`}>
+                            {doc.is_processed ? '✓ indexed' : '⏳ processing'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Delete */}
+                      <button
+                        onClick={() => deleteDoc(doc.id)}
+                        disabled={deletingDocId === doc.id}
+                        title="Remove document and its RAG chunks"
+                        className="flex-shrink-0 p-1.5 text-muted hover:text-red-500 transition disabled:opacity-40 opacity-0 group-hover:opacity-100"
+                      >
+                        {deletingDocId === doc.id ? (
+                          <div className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Messages */}
@@ -470,6 +656,52 @@ export default function TutorChatPage() {
 
         {/* Input bar */}
         <div className="border-t border-border bg-card px-6 py-4 flex-shrink-0">
+          {/* Upload area */}
+          <div className="max-w-3xl mx-auto mb-3">
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-border rounded-xl cursor-pointer hover:bg-[#F7F7F2] transition text-xs text-muted">
+                <Paperclip className="w-4 h-4" />
+                {uploadFile ? (
+                  <span className="text-accent font-medium truncate max-w-[160px]">{uploadFile.name}</span>
+                ) : (
+                  <span>Attach PDF / image / TXT</span>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.txt,.png,.jpg,.jpeg,.webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    setUploadFile(e.target.files?.[0] ?? null);
+                    setUploadStatus(null);
+                  }}
+                />
+              </label>
+              {uploadFile && (
+                <button
+                  onClick={handleUpload}
+                  disabled={uploading}
+                  className="px-3 py-2 bg-accent text-white text-xs font-medium rounded-xl hover:bg-black transition disabled:opacity-40"
+                >
+                  {uploading ? 'Uploading…' : 'Upload'}
+                </button>
+              )}
+              {uploadFile && (
+                <button
+                  onClick={() => { setUploadFile(null); setUploadStatus(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                  className="p-1.5 text-muted hover:text-red-500 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            {uploadStatus && (
+              <p className={`mt-2 text-xs ${uploadStatus.startsWith('true') ? 'text-green-600' : 'text-red-600'}`}>
+                {uploadStatus}
+              </p>
+            )}
+          </div>
+
           <form onSubmit={sendMessage} className="max-w-3xl mx-auto flex gap-3">
             <input
               type="text"

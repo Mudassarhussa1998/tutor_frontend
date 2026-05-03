@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { Home, MessageSquare, Smartphone, Bot, GraduationCap, LogOut } from 'lucide-react';
+import { Home, MessageSquare, Smartphone, Bot, GraduationCap, LogOut, Wrench } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getUser, clearAuth } from '../lib/auth';
@@ -12,6 +12,7 @@ const navigation = [
   { name: 'TutorMind AI', icon: GraduationCap, href: '/tutor/chat' },
   { name: 'Phone Search', icon: Smartphone, href: '/phone-search' },
   { name: 'Automata', icon: Bot, href: '/automata' },
+  { name: 'AI Tools', icon: Wrench, href: '/ai-tools' },
 ];
 
 export function Sidebar() {

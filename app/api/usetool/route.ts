@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 const DJANGO = process.env.API_URL || 'http://127.0.0.1:8000';
 
+/**
+ * POST /api/usetool/
+ * AI with weather tool (function calling via Groq).
+ * Body: { prompt: string }
+ */
 export async function POST(request: NextRequest) {
   try {
     const auth = request.headers.get('authorization') || '';
-    const res = await fetch(`${DJANGO}/api/auth/logout/`, {
+    const body = await request.json();
+    const res = await fetch(`${DJANGO}/api/usetool/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: auth },
+      body: JSON.stringify(body),
     });
-    // Django logout returns 200 with a message or 204
-    let data: unknown = {};
-    const text = await res.text();
-    if (text) {
-      try { data = JSON.parse(text); } catch { data = { detail: text }; }
-    }
+    const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
